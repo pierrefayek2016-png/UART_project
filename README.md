@@ -1,25 +1,25 @@
 
-# UART Core (Receiver & Transmitter)
+# UART Core (Receiver)
 
 ## 1\. Project Overview
 
-This project is a complete and robust implementation of a Universal Asynchronous Receiver/Transmitter (UART) core using Verilog HDL. The design is modular, separating the core functionalities of the UART into individual blocks for clarity, reusability, and simplified verification. The core includes both a receiver (RX) and a transmitter (TX) capable of handling standard serial communication at a configurable baud rate.
+This project is a robust and modular implementation of a Universal Asynchronous Receiver (UART) core using Verilog HDL. The design is broken down into several independent blocks, each with a specific function, to ensure clarity, reusability, and ease of verification.
 
 ## 2\. Design Philosophy
 
-The primary design philosophy for this project was modularity. Instead of creating a single, monolithic UART module, the system was broken down into smaller, logical blocks. This approach was chosen for several key reasons:
+My primary goal for this project was to create a design that was both functional and highly maintainable. I chose a modular approach, separating the complex logic into distinct, manageable blocks. This "divide and conquer" strategy was essential for several reasons:
 
-  * **Readability and Maintainability:** Each module has a single, well-defined purpose, making the code easier to read, understand, and debug.
-  * **Reusability:** Individual blocks like the `baud_counter` or the `FSM` can be easily repurposed for other projects.
-  * **Simplified Verification:** By isolating functionalities, it's possible to test each component independently before integrating them into the top-level design. This "divide and conquer" strategy significantly streamlined the debugging process.
+  * **Clarity:** Each block, such as the `baud_counter` or the `FSM`, has a single, well-defined purpose, making the overall design easier to understand and debug.
+  * **Reusability:** Individual modules can be easily reused in other projects without modification, which is a hallmark of good HDL design.
+  * **Simplified Verification:** By verifying each module independently before integrating it into the top-level design, I could isolate bugs more efficiently, significantly reducing the overall debugging time.
 
 ## 3\. Block Descriptions & Code
 
-The UART core is composed of several sub-modules, each serving a specific function.
+The UART receiver core is built from the following sub-modules, each with a detailed description of its logic and function.
 
-### UART Receiver (`uart_rx_top.v`)
+### UART Receiver Top-Level (`uart_rx_top.v`)
 
-This is the top-level module for the receiver. It orchestrates the sub-modules to convert incoming serial data into parallel data.
+**Logic Description:** This is the top-level module of the UART receiver. Its main purpose is to instantiate and connect all the sub-modules, acting as the central hub for the entire design. It handles the external interface, including the clock (`clk`), active-low reset (`arst_n`), receiver enable (`rx_en`), and serial data input (`rx_in`). It also manages the internal wire connections between the FSM, baud counter, and other components. It then assigns the internal signals to the top-level outputs (`rx_data`, `rx_done`, `rx_err`, `rx_busy`), making the received data and status signals available to the external environment.
 
 ```verilog
 module uart_rx_top #(
@@ -101,7 +101,7 @@ endmodule
 
 ### Baud Counter (`baud_counter.v`)
 
-The `baud_counter` is a simple timer that generates a one-cycle pulse, `tick`, at the mid-point of each bit period. This signal is critical for synchronizing the receiver's sampling of the incoming data. The counter runs only when enabled and can be explicitly reset by the `restart` signal.
+**Logic Description:** This module is a down-counter responsible for generating a one-cycle `tick` pulse at the precise middle of each bit period, a crucial step for correctly sampling the incoming data. The counter operates based on the `BAUD_DIV` parameter, which is calculated as `CLK_FREQ / BAUD_RATE`. When `en` is high, the counter decrements. The `restart` signal provides an asynchronous reset, allowing the FSM to re-synchronize the counter at the exact moment a start bit is detected. The `tick` signal is generated when the counter reaches the `MID_POINT` value, ensuring the most stable sampling point for the serial data.
 
 ```verilog
 module baud_counter#(
@@ -135,7 +135,14 @@ endmodule
 
 ### Finite State Machine (FSM) (`fsm.v`)
 
-The FSM controls the entire reception process. It transitions through `IDLE`, `START`, `DATA`, and `STOP` states. It uses the `tick` signal from the baud counter to determine when to sample bits and generates control signals like `shift_en` and `restart_counter` for other modules.
+**Logic Description:** The FSM is the brain of the receiver. It controls the entire reception process by transitioning through different states:
+
+  * **IDLE:** The default state, waiting for the `start` signal from the edge detector.
+  * **START:** Entered upon detection of a start bit. It validates the start bit and, if valid, transitions to the `DATA` state while asserting `busy`.
+  * **DATA:** In this state, the FSM uses the `tick` signal from the baud counter to increment a bit counter (`bit_cnt`) and assert the `shift_en` signal to shift a bit into the SIPO register. It transitions to the `STOP` state after receiving all 8 data bits.
+  * **STOP:** It waits for the `tick` to sample the stop bit. If the stop bit is valid, it asserts `done` and returns to `IDLE`. If not, it asserts `err` and returns to `IDLE`.
+
+The FSM also generates the crucial `restart_counter` signal to re-synchronize the baud counter at the start of a new frame.
 
 ```verilog
 module fsm(
@@ -232,7 +239,7 @@ endmodule
 
 ### SIPO Shift Register (`sipo_shift_register.v`)
 
-This module converts the incoming serial data (`rx_in`) into an 8-bit parallel byte. It shifts in one bit per clock cycle when the `shift_en` signal is asserted by the FSM.
+**Logic Description:** This module performs the core function of converting serial data to parallel data. It is an 8-bit register that shifts in one bit at a time from the `rx_in` line when the `shift_en` signal is high. The shifting is performed from the LSB (Least Significant Bit) towards the MSB (Most Significant Bit), as is standard in UART communication. After 8 shifts, the register holds the complete received byte in parallel form.
 
 ```verilog
 module sipo_shift_register(
@@ -256,7 +263,7 @@ endmodule
 
 ### Edge Detector (`edge_detector.v`)
 
-This simple module detects the falling edge of the `rx_in` line, which marks the start bit of a UART frame. It generates a single-cycle pulse on the `start` signal.
+**Logic Description:** This simple sequential module is a state machine with two states (`HIGH` and `LOW`). It continuously monitors the `rx_in` signal. When it detects a falling edge (a transition from high to low), it means a potential start bit has arrived. Upon detecting this transition, it generates a single-cycle pulse on the `start` output signal. This pulse is then used by the FSM to begin the reception sequence.
 
 ```verilog
 module edge_detector (
@@ -289,7 +296,7 @@ module edge_detector (
             HIGH: begin
                 if (rx_in == 1'b0) begin
                     // Falling edge detected
-                    start      = 1'b1;   
+                    start      = 1'b1;
                     next_state = LOW;
                 end
             end
@@ -305,15 +312,15 @@ endmodule
 
 ## 4\. Testbench (`RX_tb.v`)
 
-The testbench is a crucial part of the verification process. It is a self-checking environment that simulates the behavior of an external device transmitting data to the UART receiver.
+The testbench is a self-checking verification environment for the UART receiver. It simulates a sender and checks the output of the DUT (`uart_rx_top`) against expected values.
 
-**Key Tasks:**
+### Key Features:
 
-1.  **Clock and Reset Generation:** It generates a continuous clock signal and controls the asynchronous reset sequence to bring the DUT to a known state.
-2.  **Task for Sending Bytes:** A Verilog `task` is used to abstract the process of sending a byte. This task handles the start bit, all 8 data bits (LSB first), and the stop bit, with the correct timing for each. This makes the test scenario a readable, high-level sequence.
-3.  **Self-Checking:** After a byte is transmitted, the testbench waits for the `rx_done` signal to go high. It then checks if the received `rx_data` matches the expected value and if the `rx_err` signal is low. A pass/fail message is then printed to the console.
+1.  **Clock and Reset Generation:** It provides the necessary clock signal and an active-low reset to initialize the DUT.
+2.  **`sending_a_byte` Task:** A high-level Verilog task simplifies the process of transmitting a data byte. This task correctly handles the start bit, 8 data bits (LSB first), and the stop bit with precise timing, mimicking a real UART transmitter.
+3.  **Self-Checking:** After a transmission, the testbench waits for the `rx_done` signal from the DUT and then compares the received `rx_data` to the expected value. This automated check ensures that the design is functioning correctly and provides clear pass/fail feedback.
 
-**Code:**
+<!-- end list -->
 
 ```verilog
 `timescale 1ns/1ps
@@ -382,27 +389,31 @@ module uart_rx_tb;
 endmodule
 ```
 
-## 5\. Challenges and Solutions
+## 5\. Simulation Results
 
-Throughout the development and verification process, several challenges were encountered that required focused debugging to solve.
+The following waveforms demonstrate the successful operation of the UART receiver.
 
-### Challenge 1: Modular Inconsistency
+\<img src="image\_902ee2.png" alt="Waveform showing reception of 0xAA" style="width:100%;"\>
+**Figure 1:** This waveform shows a successful reception of the data byte `0xAA` (10101010). The `rx_in` line goes from high to low to signal the start bit, and you can see the data bits being sampled at the mid-point of each bit period. The `rx_data` output correctly latches the `8&#39;b10101010` value (or `0xAA`) after the stop bit is received, and the `rx_done` signal pulses high.
 
-**Problem:** The initial design had inconsistencies in module interfaces. For example, the `baud_counter` was missing a `restart` port that the `uart_rx_top` was attempting to connect. Similarly, the `sipo_shift_register` had an extra `bit_cnt` input port that was not used, leading to incorrect connections and data corruption.
+\<img src="Screenshot 2025-09-12 204702.png" alt="Waveform showing reception of 0x55" style="width:100%;"\>
+**Figure 2:** This waveform illustrates another successful test case, where the data byte `0x55` (01010101) is received. Similar to the first case, the `rx_in` signal shows the correct bit sequence, the internal `rx_data` registers assemble the byte, and the `rx_done` signal asserts upon successful completion.
 
-**Solution:** The solution was to standardize the module interfaces. The `baud_counter` was modified to include a `restart` port, and the `sipo_shift_register`'s ports were streamlined to only include what was necessary for its function. This systematic approach of ensuring all modules' port lists were compatible and logically correct was key to resolving these compilation issues.
+## 6\. Challenges and Solutions
 
-### Challenge 2: Timing and Data Corruption
+Throughout the development and verification process, I encountered several key challenges.
 
-**Problem:** During initial simulation, the `rx_done` signal would not assert, leading to a simulation timeout. The received data was also incorrect (e.g., `0xaa` was received as `0x55`). This indicated a fundamental timing issue. The `baud_counter` was not properly synchronized with the incoming start bit, causing the receiver to sample data at the wrong time.
+### Challenge 1: Timing and Data Inversion
 
-**Solution:** The issue was traced to the `baud_counter`'s restart mechanism. By adding a `restart_counter` output to the FSM, the `uart_rx_top` was able to precisely tell the `baud_counter` when a new frame had started, resetting it at the correct moment (the falling edge of the start bit). This ensured that the mid-bit `tick` was generated at the exact center of each data bit, resolving the timing drift and data corruption.
+**Problem:** The initial simulations resulted in a `TIMEOUT` error and an incorrect `rx_data` value (e.g., `0xAA` was received as `0x55`). This indicated a critical timing issue. The `baud_counter` was not being reset at the precise moment of the start bit, causing the receiver to sample data at the wrong time and misinterpreting the bits.
 
-### Challenge 3: Testbench-to-DUT Port Mismatches
+**Solution:** I identified that the FSM needed to be responsible for initiating the `baud_counter`'s operation. I introduced a `restart_counter` signal, which is asserted by the FSM as soon as a valid start bit is detected. This signal ensures the `baud_counter` is reset at the correct time, allowing the `tick` signal to be perfectly aligned with the center of each data bit, thus solving the timing drift and data inversion.
 
-**Problem:** The testbench file (`RX_tb.v`) was not compatible with the `uart_rx_top.v` file. It was instantiating a module with the wrong name (`uart_rx`) and using incompatible port names (`reset` instead of `arst_n`). This resulted in an immediate compilation error.
+### Challenge 2: Testbench-to-DUT Port Mismatches
 
-**Solution:** The testbench was updated to correctly match the top-level module's name (`uart_rx_top`) and port names, ensuring a clean and successful compilation. This reinforced the importance of careful port-level verification before running a full simulation.
+**Problem:** My testbench was initially designed with incompatible port names and an incorrect module instantiation name. For example, my testbench used `uart_rx` and `reset`, while my top-level design was named `uart_rx_top` and used an active-low reset signal called `arst_n`. This led to compilation errors, preventing the simulation from even starting.
+
+**Solution:** I performed a thorough review of all module interfaces. I renamed the testbench's signals (`reset` to `arst_n`) and updated the module instantiation to match the top-level design (`uart_rx_top`). This meticulous process of ensuring all module ports were consistent and correctly connected was a fundamental step in achieving a functional and verifiable design.
 
 
 <img width="624" height="118" alt="image" src="https://github.com/user-attachments/assets/30c959d6-5ff8-4bb5-a0d0-547f14e09521" />
